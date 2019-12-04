@@ -5,7 +5,6 @@ import time, datetime
 import json, re, requests
 import urllib.parse
 import urllib.request
-from tabulate import tabulate
 
 import discord #0.16
 
@@ -160,6 +159,7 @@ class Bot(Translation):
             content = f.read()
         for word in content.strip().split("\n"):
             self.spam_words.add(word)
+        self.spam_words.discard("")
         self.update_spam()
 
     def load_alert(self):
@@ -167,6 +167,7 @@ class Bot(Translation):
         with open(fp, "r", encoding="utf-8") as f:
             content = f.read()
         self.alert_words = set(content.strip().split("\n"))
+        self.alert_words.discard("")
         self.update_alert()
 
     def update_spam(self):
@@ -209,6 +210,8 @@ class Bot(Translation):
             return False
 
     def check_op_user(self, msg:discord.Message) -> bool:
+        if not isinstance(msg.author, discord.Member):
+            return True
         roles = {r.name for r in msg.author.roles}
         for op in ["op2", "op3", "op4"]:
             if self.op_role[op] in roles:
@@ -267,6 +270,9 @@ class Bot(Translation):
 
     def check_permission_read_message_history(self, ch:discord.Channel, member:discord.Member) -> bool:
         return ch.permissions_for(member).read_message_history
+    
+    def check_permission_read_message(self, ch:discord.Channel, member:discord.Member) -> bool:
+        return ch.permissions_for(member).read_messages
 
     def create_role_set_name(self, member:discord.Member) -> set:
         return {r.name for r in member.roles}
@@ -329,7 +335,6 @@ class Bot(Translation):
             time = msg.timestamp.strftime("%Y/%m/%d %H:%M:%S"),
             user = self.save_author(msg.author),
             msg_id = msg.id,
-            user_id = msg.author.id,
             msg_type = msg.type.name if isinstance(msg.type, discord.MessageType) else "other type",
             attachments = "\n".join([attach["url"] for attach in msg.attachments]),
             embed = "無" if msg.embeds is None else ("有" if len(msg.embeds) > 0 else "無"),
@@ -348,7 +353,6 @@ class Bot(Translation):
             after_time = after.timestamp.strftime("%Y/%m/%d %H:%M:%S"),
             before_time = before.timestamp.strftime("%Y/%m/%d %H:%M:%S"),
             user = self.save_author(after.author),
-            user_id = after.author.id,
             msg_id = after.id,
             msg_type = after.type.name if isinstance(after.type, discord.MessageType) else "other type",
             attachments = "\n".join([attach["url"] for attach in after.attachments]),
@@ -365,7 +369,6 @@ class Bot(Translation):
             delete_time = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
             time = msg.timestamp.strftime("%Y/%m/%d %H:%M:%S"),
             user = self.save_author(msg.author),
-            user_id = msg.author.id,
             msg_id = msg.id,
             msg_type = msg.type.name if isinstance(msg.type, discord.MessageType) else "other type",
             attachments = "\n".join([attach["url"] for attach in msg.attachments]),
@@ -426,6 +429,11 @@ class Bot(Translation):
                     if filename != exday:
                         dirs.append(filename)
         return dirs
+
+    async def log_request(self, msg:discord.Message):
+        if msg.channel.id == self.config["log_request_ch"]:
+            if msg.content == self.config["log_request_msg"]:
+                await self.send_msg_logs()
 
     async def send_msg_logs(self):
         for day in self.msg_log_dir_list():
@@ -539,14 +547,15 @@ class Bot(Translation):
         users_set = set()
         ch_msg_count = dict()
         for ch in server.channels:
-            if self.check_permission_read_message_history(ch, ch.server.get_member(self.client.user.id)):
-                ch_msg_count[ch.id] = 0
-                async for message in self.client.logs_from(ch, limit=1000, after=after):
-                    ch_msg_count[ch.id] += 1
-                    msg_count += 1
-                    if not message.author.id in users_set:
-                        users_set.add(message.author.id)
-                        users.append(message.author)
+            if self.check_permission_read_message(ch, ch.server.get_member(self.client.user.id)):
+                if self.check_permission_read_message_history(ch, ch.server.get_member(self.client.user.id)):
+                    ch_msg_count[ch.id] = 0
+                    async for message in self.client.logs_from(ch, limit=1000, after=after):
+                        ch_msg_count[ch.id] += 1
+                        msg_count += 1
+                        if not message.author.id in users_set:
+                            users_set.add(message.author.id)
+                            users.append(message.author)
         return msg_count, len(users_set), ch_msg_count, users
 
     def save_users(self, users, seq="\n") -> str:
@@ -735,11 +744,10 @@ class Bot(Translation):
         if reaction.emoji != "✅":
             return None
         role_count = self.__count_role(reaction.message.server)
-        table = list()
-        for k, v in role_count:
-            table.append([k, str(v)])
-        header = ["role name", "count"]
-        result = "```\n" + tabulate(table, headers, tablefmt="grid") + "\n```"
+        result = "```\n"
+        for role in reaction.message.server.role_hierarchy:
+            result += "{0} : {1}人\n".format(role.name, str(role_count[role.name]))
+        result += "```"
         await self.client.edit_message(self.count_role_msg, result)
         await self.remove_reaction(self.count_role_msg.id, self.count_role_msg.channel.id, "✅", user.id)
         
@@ -1249,6 +1257,8 @@ class Bot(Translation):
                 await self.spam(msg)
 
     async def spam(self, msg:discord.Message):
+        if not bool(self.spam_pattern):
+            return None
         match = re.search(self.spam_pattern, msg.content)
         if not match:
             return None
@@ -1265,6 +1275,8 @@ class Bot(Translation):
             await self.alert_report(msg, **report)
 
     async def alert(self, msg:discord.Message):
+        if not bool(self.alert_pattern):
+            return None
         match = re.search(self.alert_pattern, msg.content)
         if not match:
             return None

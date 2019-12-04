@@ -1,0 +1,78 @@
+{
+    "//1" : "BOT info",
+    "BotName" : "",
+    "NAME" : "",
+    "TOKEN" : "",
+    "color" : [
+        0,
+        0,
+        0
+    ],
+    "action_server_id" : "",
+    "admin_action_ch_id" : "",
+
+    "anti_spam": false,
+    
+    "//2" : "op level role name",
+    "op" : {
+        "op1" : "@everyone",
+        "op2" : "",
+        "op3" : "",
+        "op4" : ""
+    },
+
+    "//3" : "save message_log?",
+    "save_message_log" : false,
+    "send_logzipfile": false,
+    "send_logzipfile_channel": "",
+
+    "//4" : "save voice log?",
+    "save_voice_log" : false,
+    "send_voice_log_ch" : "",
+    "AFK_channel" : "",
+
+    "//5" : "send_welcome_msg?",
+    "welcome_msg_ch" : false,
+    "welcome_msg_ch_id" : "",
+    "welcome_msg_ch_random" : false,
+
+    "welcome_msg_dm" : false,
+    "welcome_msg_dm_random" : false,
+
+    "send_member_join/remove_log" : false,
+    "member_join/remove_log_ch" : "",
+
+    "member_count" : false,
+    "member_count_ch" : "",
+
+    "//6" : "admin action setting",
+    "ban_del_msg" : 0,
+    "ban_dm" : false,
+    
+    "kick_dm" : false,
+
+    "stop" : "",
+
+    "receive_dm" : false,
+    "receive_dm_ch" : "",
+
+    "//7" : "use translation?",
+    "translation" : false,
+
+    "//8" : "use auto role system?",
+    "auto_role" : false,
+    "auto_role_ch" : "",
+
+    "//9" : "use reaction authentication system?",
+    "reaction_authentication" : false,
+    "reaction_authentication_role" : "",
+    "reaction_authentication_msg" : "",
+
+    "//10" : "use count role system?",
+    "count_role" : false,
+    "count_role_msg" : "",
+
+    "//99" : "debug channels",
+    "launch_report" : "",
+    "test_ch" : ""
+}

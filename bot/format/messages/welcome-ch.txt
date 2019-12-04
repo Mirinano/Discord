@@ -1,0 +1,1 @@
+This message is sent to the channel when a member enters the room.

@@ -6,7 +6,6 @@ import time, datetime
 import json
 import shutil
 import re
-import schedule
 
 import discord
 
@@ -55,6 +54,9 @@ async def on_message(message):
         #user only action
         if message.author != client.user:
             if config["translation"]:
+                if config.get("auto_translation"):
+                    if message.channel.id == config["auto_translation_ch"]:
+                        await bot.auto_translation(message)
                 if bot.check_cmd_start(message, cmd_trigger.translation): #tranlsation
                     await bot.translation_bot(message)
 
@@ -102,12 +104,13 @@ async def on_message(message):
                 pass
 
     if message.author != client.user:
-        if isinstance(message.channel, discord.PrivateChannel):
+        if not isinstance(message.channel, discord.TextChannel):
             if config["receive_dm"]:
                 await bot.receive_dm(message)
 
     # send message log
     if config["send_logzipfile"]:
+        await bot.log_request(message)
         if bot.check_cmd_start(message, cmd_trigger.send_zip): #force send msg log
             await bot.send_msg_logs()
         elif bot.check_cmd_start(message, cmd_trigger.send_today_zip): #send today's msg log
@@ -131,7 +134,7 @@ async def on_message_edit(before, after):
         else:
             pass
     if before.author != client.user:
-        if isinstance(before.channel, discord.PrivateChannel):
+        if not isinstance(before.channel, discord.TextChannel):
             await bot.receive_dm_edit(before, after)
 
 @client.event
@@ -142,27 +145,28 @@ async def on_message_delete(message):
         else:
             pass
     if message.author != client.user:
-        if isinstance(message.channel, discord.PrivateChannel):
+        if not isinstance(message.channel, discord.TextChannel):
             await bot.receive_dm_delete(message)
 
 @client.event
 async def on_member_join(member):
-    if bot.check_server(member.server):
+    if bot.check_server(member.guild):
         if config["send_member_join/remove_log"]:
             await bot.member_join_log(member)
 
 @client.event
 async def on_member_remove(member):
-    if bot.check_server(member.server):
+    if bot.check_server(member.guild):
         if config["send_member_join/remove_log"]:
             await bot.member_remove_log(member)
 
 @client.event
-async def on_voice_state_update(before, after):
-    if bot.check_server(before.server):
+async def on_voice_state_update(member, before, after):
+    if bot.check_server(member.guild):
         if config["save_voice_log"]:
-            await bot.save_voice_log(before, after)
+            await bot.save_voice_log(member, before, after)
 
+"""
 @client.event
 async def on_reaction_add(reaction, user):
     if config["reaction_authentication"]:
@@ -174,5 +178,18 @@ async def on_reaction_add(reaction, user):
 async def on_reaction_remove(reaction, user):
     if config["reaction_authentication"]:
         await bot.rule_reaction_remove(reaction, user)
+"""
+
+@client.event
+async def on_raw_reaction_add(payload):
+    if config["reaction_authentication"]:
+        await bot.raw_rule_reaction_add(payload)
+    if config["count_role"]:
+        await bot.raw_count_role(payload)
+
+@client.event
+async def on_raw_reaction_remove(payload):
+    if config["reaction_authentication"]:
+        await bot.raw_rule_reaction_remove(payload)
 
 client.run(config["TOKEN"])

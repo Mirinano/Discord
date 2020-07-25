@@ -1,4 +1,4 @@
-#!python3.6
+#!python3.8
 import sys, os, shutil, copy
 import asyncio, threading
 import time, datetime
@@ -6,7 +6,7 @@ import json, re, requests
 import urllib.parse
 import urllib.request
 
-import discord #0.16
+import discord #1.3
 
 #original
 from __init__ import Developer
@@ -69,10 +69,19 @@ class Translation:
     def test_translation(self, content:str, target:str, source:str) -> tuple:
         url = Translation.URL + "?key=" + Translation.API_KEY
         content = self.__encode_content(content)
+        print(content)
         url += "&q={0}&source={1}&target={2}".format(content, source, target)
         rr=requests.get(url)
         unit_aa=json.loads(rr.text)
         print(unit_aa)
+
+class Talk():
+    def __init__(self, config:dict, client:discord.Client):
+        self.config = config
+        self.client = client
+
+    def load_talk(self):
+        pass
 
 class Bot(Translation):
     def __init__(self, config:dict, client:discord.Client):
@@ -83,6 +92,8 @@ class Bot(Translation):
         self.bot_color = self.change_color_code()
         self.op_role = self.create_op_role()
         self.bot_dir = "./bot/{0}/".format(self.config["NAME"])
+
+        self.guild_ch_type = (discord.TextChannel, discord.VoiceChannel, discord.CategoryChannel)
 
         #system message directory
         self.sys_msg_dir = self.bot_dir + "messages/"
@@ -117,21 +128,22 @@ class Bot(Translation):
         self.create_op_role_mention()
         await self.set_frequent_data()
         await self.load_capture_message()
+        await self.client.request_offline_members(self.action_server)
 
     #test method
     async def launch_report(self):
         ch = self.client.get_channel(self.config["launch_report"])
         content = "{0} has started. \nStartup time: {1}".format(self.client.user.name, datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"))
-        await self.client.send_message(ch, content)
+        await ch.send(content)
     
     async def send_test_msg(self):
         ch = self.client.get_channel(self.config["test_ch"])
         content = "this is test msg. \n\ttime:{}".format(datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"))
-        await self.client.send_message(ch, content)
+        await ch.send(content)
 
     #setup method
     async def set_frequent_data(self):
-        self.action_server = self.client.get_server(self.config["action_server_id"])
+        self.action_server = self.client.get_guild(self.config["action_server_id"])
         self.admin_action_ch = self.client.get_channel(self.config["admin_action_ch_id"])
 
     async def load_capture_message(self):
@@ -144,11 +156,16 @@ class Bot(Translation):
         match = re.search(r"\d+/\d+/\d+", url)
         if match:
             url_list = match.group(0).split("/")
-            msg = await self.search_message(url_list[1], url_list[2])
-            self.client.messages.append(msg)
+            msg = await self.fetch_message(int(url_list[1]), int(url_list[2]))
+            self.client._connection._messages.append(msg)
             return msg
         else:
             return None
+    
+    async def fetch_message(self, ch_id:int, msg_id:int):
+        channel = self.client.get_channel(ch_id)
+        data = await self.client.http.get_message(channel.id, msg_id)
+        return self.client._connection.create_message(channel=channel, data=data)
 
     def load_spam(self):
         fp = self.bot_dir + "spam.txt"
@@ -185,8 +202,8 @@ class Bot(Translation):
             while line:
                 try:
                     text = line.strip().split(",")
-                    self.color_role[text[0]] = text[1]
-                    self.color_role_set.add(text[1])
+                    self.color_role[text[0]] = int(text[1])
+                    self.color_role_set.add(int(text[1]))
                 except:
                     break
                 line = f.readline()
@@ -199,7 +216,7 @@ class Bot(Translation):
                     text = line.strip().split(",")
                 except:
                     break
-                self.normal_role[text[0]] = text[1]
+                self.normal_role[text[0]] = int(text[1])
                 line = f.readline()
 
     #check method
@@ -239,19 +256,19 @@ class Bot(Translation):
         return datetime.datetime.now().strftime("%Y-%m-%d")
 
     def check_server(self, target) -> bool:
-        if self.config["action_server_id"] == "": #all server
+        if self.config["action_server_id"] == 0: #all server
             return True
-        if isinstance(target, discord.Channel):
-            return target.server.id == self.config["action_server_id"]
-        elif isinstance(target, discord.Server):
+        if isinstance(target, self.guild_ch_type):
+            return target.guild.id == self.config["action_server_id"]
+        elif isinstance(target, discord.Guild):
             return target.id == self.config["action_server_id"]
         elif isinstance(target, discord.Message):
-            if isinstance(target.channel, discord.Channel):
-                return target.channel.server.id in self.config["action_server_id"]
+            if isinstance(target.channel, self.guild_ch_type):
+                return target.channel.guild.id in self.config["action_server_id"]
             else:
                 return False
         elif isinstance(target, discord.Member):
-            return target.server.id == self.config["action_server_id"]
+            return target.guild.id == self.config["action_server_id"]
         else:
             return False
 
@@ -259,19 +276,19 @@ class Bot(Translation):
         if msg.content.startswith(trigger[0]):
             if self.config["op"][trigger[1]] in [r.name for r in msg.author.roles]:
                 return True
-            elif msg.author.server_permissions.administrator:
+            elif msg.author.guild_permissions.administrator:
                 return True
             else:
                 return False
         return False
 
-    def check_permission_send_msg(self, ch:discord.Channel, member:discord.Member) -> bool:
+    def check_permission_send_msg(self, ch:discord.abc.GuildChannel, member:discord.Member) -> bool:
         return ch.permissions_for(member).send_messages
 
-    def check_permission_read_message_history(self, ch:discord.Channel, member:discord.Member) -> bool:
+    def check_permission_read_message_history(self, ch:discord.abc.GuildChannel, member:discord.Member) -> bool:
         return ch.permissions_for(member).read_message_history
     
-    def check_permission_read_message(self, ch:discord.Channel, member:discord.Member) -> bool:
+    def check_permission_read_message(self, ch:discord.abc.GuildChannel, member:discord.Member) -> bool:
         return ch.permissions_for(member).read_messages
 
     def create_role_set_name(self, member:discord.Member) -> set:
@@ -290,7 +307,10 @@ class Bot(Translation):
         return r_dict
 
     def create_op_role_mention(self) -> dict:
-        server = self.client.get_server(self.config["action_server_id"])
+        server = self.client.get_guild(self.config["action_server_id"])
+        if server is None:
+            print("server is not found")
+            return None
         r_dict = dict()
         for role in server.roles:
             if role.name in list(self.config["op"].values()):
@@ -303,7 +323,7 @@ class Bot(Translation):
 
     def create_msg_url(self, msg:discord.Message) -> str:
         return log_format.msg_url.format(
-            server = "@me" if msg.channel.is_private else msg.server.id,
+            server = "@me" if msg.channel.is_private else msg.guild.id,
             ch = msg.channel.id,
             msg = msg.id
         )
@@ -321,22 +341,22 @@ class Bot(Translation):
                     op_level = op_level + self.op_role.get(role_name)
             cmd = help_msg.main_help.format("\n".join(["\n".join(help_msg.help_cmd.get(h)) for h in op_level]))
             
-            await self.client.send_message(msg.channel, cmd)
+            await msg.channel.send(cmd)
         else:
             target = content.split(" ")[1].strip("/ ")
             cmd = help_msg.help_message.get(target)
             cmd = cmd if cmd is not None else "そのようなコマンドはありません。"
-            await self.client.send_message(msg.channel, cmd)
+            await msg.channel.send(cmd)
 
     #save log method
     def save_msg_log(self, msg:discord.Message, * , fp:str=None, write:bool=True):
-        ch_name = msg.channel.name if isinstance(msg.channel, discord.Channel) else "DM"
+        ch_name = msg.channel.name if isinstance(msg.channel, self.guild_ch_type) else "DM"
         save_content = log_format.msg_log.format(
-            time = msg.timestamp.strftime("%Y/%m/%d %H:%M:%S"),
+            time = msg.created_at.strftime("%Y/%m/%d %H:%M:%S"),
             user = self.save_author(msg.author),
             msg_id = msg.id,
             msg_type = msg.type.name if isinstance(msg.type, discord.MessageType) else "other type",
-            attachments = "\n".join([attach["url"] for attach in msg.attachments]),
+            attachments = "\n".join([attach.url for attach in msg.attachments]),
             embed = "無" if msg.embeds is None else ("有" if len(msg.embeds) > 0 else "無"),
             content = self.content_fw_wrap(msg.content)
         ) + "\n" + "-"*75 + "\n"
@@ -348,14 +368,16 @@ class Bot(Translation):
             return save_content
 
     def save_msg_change_log(self, before:discord.Message, after:discord.Message):
-        ch_name = after.channel.name if isinstance(after.channel, discord.Channel) else "DM"
+        if before.edited_at is None:
+            return
+        ch_name = after.channel.name if isinstance(after.channel, self.guild_ch_type) else "DM"
         save_content = log_format.msg_change_log.format(
-            after_time = after.timestamp.strftime("%Y/%m/%d %H:%M:%S"),
-            before_time = before.timestamp.strftime("%Y/%m/%d %H:%M:%S"),
+            after_time = after.created_at.strftime("%Y/%m/%d %H:%M:%S"),
+            before_time = before.edited_at.strftime("%Y/%m/%d %H:%M:%S"),
             user = self.save_author(after.author),
             msg_id = after.id,
             msg_type = after.type.name if isinstance(after.type, discord.MessageType) else "other type",
-            attachments = "\n".join([attach["url"] for attach in after.attachments]),
+            attachments = "\n".join([attach.url for attach in after.attachments]),
             embed = "無" if after.embeds is None else ("有" if len(after.embeds) > 0 else "無"),
             before_content = self.content_fw_wrap(before.content),
             after_content = self.content_fw_wrap(after.content)
@@ -364,14 +386,14 @@ class Bot(Translation):
         return self.write_file(fp, save_content)
     
     def save_msg_delete_log(self, msg:discord.Message):
-        ch_name = msg.channel.name if isinstance(msg.channel, discord.Channel) else "DM"
+        ch_name = msg.channel.name if isinstance(msg.channel, self.guild_ch_type) else "DM"
         save_content = log_format.msg_delete_log.format(
             delete_time = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
-            time = msg.timestamp.strftime("%Y/%m/%d %H:%M:%S"),
+            time = msg.created_at.strftime("%Y/%m/%d %H:%M:%S"),
             user = self.save_author(msg.author),
             msg_id = msg.id,
             msg_type = msg.type.name if isinstance(msg.type, discord.MessageType) else "other type",
-            attachments = "\n".join([attach["url"] for attach in msg.attachments]),
+            attachments = "\n".join([attach.url for attach in msg.attachments]),
             embed = "無" if msg.embeds is None else ("有" if len(msg.embeds) > 0 else "無"),
             content = self.content_fw_wrap(msg.content)
         ) + "\n" + "-"*75 + "\n"
@@ -380,7 +402,7 @@ class Bot(Translation):
     
     def save_author(self, author):
         if isinstance(author, discord.Member):
-            if author.nick is not None:
+            if isinstance(author.nick, str):
                 return "{0} (アカウント名: {1}#{2}, ID: {3})".format(author.nick, author.name, author.discriminator, author.id)
         return "{0}#{1} (ID: {2})".format(author.name, author.discriminator, author.id)
 
@@ -441,7 +463,8 @@ class Bot(Translation):
             file_name = day + ".zip"
             send_msg = "{}のメッセージログです。".format(day)
             ch = self.client.get_channel(self.config["send_logzipfile_channel"])
-            await self.client.send_file(ch, zip_file, content=send_msg, filename=file_name)
+            file_obj = discord.File(zip_file, filename=file_name)
+            await ch.send(content=send_msg, file=file_obj)
     
     async def send_today_msg_log(self):
         day = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -449,7 +472,8 @@ class Bot(Translation):
         file_name = day + ".zip"
         send_msg = "{}のメッセージログです。".format(day)
         ch = self.client.get_channel(self.config["send_logzipfile_channel"])
-        await self.client.send_file(ch, zip_file, content=send_msg, filename=file_name)
+        file_obj = discord.File(zip_file, filename=file_name)
+        await ch.send(content=send_msg, file=file_obj)
 
     async def statistics_cmd(self, msg:discord.Message):
         #check cmd type
@@ -460,13 +484,13 @@ class Bot(Translation):
             cmd = None
         # swich
         if cmd == "full":
-            await self.full_statistics(msg.server, msg.channel)
+            await self.full_statistics(msg.guild, msg.channel)
         elif cmd == "simple":
-            await self.simple_statistics(msg.server, msg.channel)
+            await self.simple_statistics(msg.guild, msg.channel)
         else:
-            await self.save_statistics(msg.server, send_ch=msg.channel, save=False)
+            await self.save_statistics(msg.guild, send_ch=msg.channel, save=False)
 
-    async def save_statistics(self, server:discord.Server, day:datetime.datetime=None, * , send_ch:discord.Channel=None, save=True) -> str:
+    async def save_statistics(self, server:discord.Guild, day:datetime.datetime=None, * , send_ch:discord.TextChannel=None, save=True) -> str:
         day = datetime.datetime.now() if day is None else day
         if save:
             fp = self.statistics_log.format(day.strftime("%Y-%m-%d"))
@@ -480,31 +504,32 @@ class Bot(Translation):
             server_create = server.created_at.strftime("%Y/%m/%d %H:%M:%S"),
             owner = self.save_author(server.owner),
             owner_id = server.owner.id,
-            member_count = str(server.member_count),
+            member_count = server.member_count,
             msg_count = msg_count,
             writer_count = write_count,
             region = str(server.region),
             afk_time = str(server.afk_timeout),
             top_role = self.save_role(top_role),
             top_users = self.save_users(self.search_top_role_users(server, top_role), seq="\n\t"),
-            default_channel = self.save_channel(server.default_channel),
+            default_channel = self.save_channel(server.rules_channel) if server.rules_channel is not None else "None",
             default_role = self.save_role(server.default_role),
-            invites = await self.save_invites(server, seq="\n\t" ,indent=1),
+            invites = await self.save_invites(server, seq="\n\t", indent=1),
             roles = self.save_roles(server, seq="\n\t"),
             channels = self.save_channels(server, seq="\n\t")
         )
         self.write_file(fp, content, mode="w")
         if send_ch is not None:
             try:
-                await self.client.send_message(send_ch, content)
+                await send_ch.send(content)
             except discord.HTTPException:
                 try:
-                    await self.client.send_file(send_ch, fp, content="統計情報です。")
+                    file_obj = discord.File(zip_file, filename="statistscs")
+                    await send_ch.send(content="統計情報", file=file_obj)
                 except:
                     pass
         return content
 
-    async def simple_statistics(self, server:discord.Server, send_ch:discord.Channel):
+    async def simple_statistics(self, server:discord.Guild, send_ch:discord.TextChannel):
         top_role = self.search_top_role(server)
         content = log_format.statistics_simple.format(
             server_name = server.name,
@@ -517,20 +542,20 @@ class Bot(Translation):
             afk_time = str(server.afk_timeout),
             top_role = self.save_role(top_role),
             top_users = self.save_users(self.search_top_role_users(server, top_role), seq="\n\t"),
-            default_channel = self.save_channel(server.default_channel),
+            default_channel = self.save_channel(server.rules_channel) if server.rules_channel is not None else "None",
             default_role = self.save_role(server.default_role),
-            invites = await self.save_invites_simple(server, seq="\n\t" ,indent=1),
+            invites = await self.save_invites_simple(server, seq="\n\t", indent=1),
         )
-        await self.client.send_message(send_ch, content)
+        await send_ch.send(content)
 
-    async def full_statistics(self, server:discord.Server, send_ch:discord.Channel):
+    async def full_statistics(self, server:discord.Guild, send_ch:discord.TextChannel):
         pass
 
-    def search_top_role(self, server:discord.Server) -> discord.Role:
-        for role in server.role_hierarchy:
+    def search_top_role(self, server:discord.Guild) -> discord.Role:
+        for role in server.roles:
             return role
     
-    def search_top_role_users(self, server:discord.Server, role:discord.Role=None) -> list:
+    def search_top_role_users(self, server:discord.Guild, role:discord.Role=None) -> list:
         role = self.search_top_role(server) if role is None else role
         user_list = list()
         for member in server.members:
@@ -540,18 +565,18 @@ class Bot(Translation):
                 continue
         return user_list
     
-    async def search_recent_messages_users(self, server:discord.Server, day:int=1):
-        after = datetime.datetime.today() - datetime.timedelta(days=day)
+    async def search_recent_messages_users(self, server:discord.Guild, day:int=1):
+        after = datetime.datetime.now() - datetime.timedelta(days=day)
         msg_count = user_count = 0
         users = list()
         users_set = set()
         ch_msg_count = dict()
-        for ch in server.channels:
-            if self.check_permission_read_message(ch, ch.server.get_member(self.client.user.id)):
-                if self.check_permission_read_message_history(ch, ch.server.get_member(self.client.user.id)):
-                    ch_msg_count[ch.id] = 0
-                    async for message in self.client.logs_from(ch, limit=1000, after=after):
-                        ch_msg_count[ch.id] += 1
+        for ch in server.text_channels:
+            if self.check_permission_read_message(ch, ch.guild.get_member(self.client.user.id)):
+                if self.check_permission_read_message_history(ch, ch.guild.get_member(self.client.user.id)):
+                    ch_msg_count[str(ch.id)] = 0
+                    async for message in ch.history(limit=1000, after=after):
+                        ch_msg_count[str(ch.id)] += 1
                         msg_count += 1
                         if not message.author.id in users_set:
                             users_set.add(message.author.id)
@@ -562,36 +587,26 @@ class Bot(Translation):
         users = [self.save_author(u) for u in users]
         return seq.join(users)
 
-    def save_users_all(self, server:discord.Server, seq:str="\n", indent:int=0) -> str:
+    def save_users_all(self, server:discord.Guild, seq:str="\n", indent:int=0) -> str:
         pass
 
     def save_author_mention(self, member) -> str:
         return self.save_author(member) + " (<@{0}>)".format(member.id)
 
-    def save_channel(self, channel:discord.Channel, indent=0) -> str:
-        if isinstance(channel, discord.Channel):
-            return "\t"*indent + "{0} (ID: {1}, type: {2}, pos: {3})".format(channel.name, channel.id, str(channel.type), str(channel.position))
+    def save_channel(self, channel, indent=0) -> str:
+        if isinstance(channel, self.guild_ch_type):
+            return "\t"*indent + "{0} (ID: {1}, pos: {2})".format(channel.name, channel.id, str(channel.position))
         return ""
 
-    def save_channels(self, server:discord.Server, seq="\n", * , sort:bool=True) -> str:
-        channels = list()
-        for ch in server.channels:
-            channels.append(ch)
-        if sort:
-            channels.sort(key=lambda x:(str(x.type), x.position))
-        channels = [self.save_channel(ch) for ch in channels]
+    def save_channels(self, server:discord.Guild, seq="\n", * , sort:bool=True) -> str:
+        channels = [self.save_channel(ch) for ch in server.channels]
         return seq.join(channels)
 
     def save_role(self, role:discord.Role, indent=0) -> str:
         return "\t"*indent + "{0} (ID: {1}, pos: {2})".format(role.name, role.id, str(role.position))
     
-    def save_roles(self, server:discord.Server, seq="\n", * , sort:bool=True) -> str:
-        roles = list()
-        for role in server.roles:
-            roles.append(role)
-        if sort:
-            roles.sort(key=lambda x:x.position, reverse=True)
-        roles = [self.save_role(r) for r in roles]
+    def save_roles(self, server:discord.Guild, seq="\n", * , sort:bool=True) -> str:
+        roles = [self.save_role(r) for r in server.roles]
         return seq.join(roles)
     
     def save_invite(self, invite:discord.Invite, indent=0) -> str:
@@ -600,42 +615,42 @@ class Bot(Translation):
             URL = invite.url,
             created_at = invite.created_at.strftime("%Y/%m/%d %H:%M:%S"),
             uses = str(invite.uses),
-            max_uses = str(invite.max_uses),
+            max_uses = "str(invite.max_uses)",
             inviter = self.save_author(invite.inviter),
             channel = self.save_channel(invite.channel)
         )
 
-    async def save_invites_simple(self, server:discord.Server, seq="\n", indent=0) -> str:
+    async def save_invites_simple(self, server:discord.Guild, seq="\n", indent=0) -> str:
         invites = list()
-        for invite in await self.client.invites_from(server):
+        for invite in await server.invites():
             invites.append(invite.code)
         return seq.join(invites)
 
-    async def save_invites(self, server:discord.Server, seq="\n", indent=0) -> str:
+    async def save_invites(self, server:discord.Guild, seq="\n", indent=0) -> str:
         invites = list()
-        for invite in await self.client.invites_from(server):
+        for invite in await server.invites():
             invites.append(self.save_invite(invite, indent))
         return seq.join(invites)
 
     #member join/remove action
     async def member_join_log(self, member:discord.Member):
-        send_ch = await self.send_welcome_ch()
+        send_ch = await self.send_welcome_ch(member)
         send_dm = await self.send_welcome_dm(member)
         content = log_format.join_member_message.format(
             time = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
             user = self.save_author(member),
             user_id = member.id,
             user_create = member.created_at.strftime("%Y/%m/%d %H:%M:%S"),
-            count = str(member.server.member_count),
+            count = str(member.guild.member_count),
             send_ch = send_ch,
             send_dm = send_dm
         )
         ch = self.client.get_channel(self.config["member_join/remove_log_ch"])
-        await self.client.send_message(ch, content)
+        await ch.send(content)
         if self.config["member_count"]:
-            await self.member_count(member.server)
+            await self.member_count(member.guild)
     
-    async def send_welcome_ch(self, file_name:str="welcome-ch") -> str:
+    async def send_welcome_ch(self, member:discord.Member, file_name:str="welcome-ch") -> str:
         if self.config["welcome_msg_ch"]:
             if self.config["welcome_msg_ch_random"]:
                 pass
@@ -644,13 +659,13 @@ class Bot(Translation):
                 with open(fp, "r", encoding="utf-8") as f:
                     content = f.read()
                 ch = self.client.get_channel(self.config["welcome_msg_ch_id"])
-                await self.client.send_message(ch, content)
-                return "成功"
-            except Exception as e:
-                print(e)
-                return "失敗"
+                content.replace("$member$", "<@{}>".format(member.id))
+                await ch.send(content)
+                return words.welcome_ch_success
+            except:
+                return words.welcome_ch_fail
         else:
-            return "未設定"
+            return ""
     
     async def send_welcome_dm(self, member:discord.Member, file_name:str="welcome-dm") -> str:
         if self.config["welcome_msg_dm"]:
@@ -660,13 +675,12 @@ class Bot(Translation):
                 fp = self.sys_msg_dir + "{}.txt".format(file_name)
                 with open(fp, "r", encoding="utf-8") as f:
                     content = f.read()
-                await self.client.send_message(member, content)
-                return "成功"
-            except Exception as e:
-                print(e)
-                return "失敗"
+                await member.send(content)
+                return words.welcome_dm_success
+            except:
+                return words.welcome_dm_fail
         else:
-            return "未設定"
+            return ""
 
     async def member_remove_log(self, member:discord.Member):
         content = log_format.remove_member_message.format(
@@ -674,16 +688,17 @@ class Bot(Translation):
             user = self.save_author(member),
             user_id = member.id,
             user_create = member.created_at.strftime("%Y/%m/%d %H:%M:%S"),
-            count = str(member.server.member_count)
+            count = str(member.guild.member_count)
         )
         ch = self.client.get_channel(self.config["member_join/remove_log_ch"])
-        await self.client.send_message(ch, content)
+        await ch.send(content)
         if self.config["member_count"]:
-            await self.member_count(member.server)
+            await self.member_count(member.guild)
 
-    async def member_count(self, server:discord.Server):
+    async def member_count(self, server:discord.Guild):
         name = log_format.member_count.format(str(server.member_count))
-        await self.client.edit_channel(self.client.get_channel(self.config["member_count_ch"]), name=name)
+        ch = self.client.get_channel(self.config["member_count_ch"])
+        await ch.edit(name=name)
 
     #reaction authentication system
     async def rule_reaction_add(self, reaction:discord.Reaction, user:discord.Member):
@@ -700,6 +715,20 @@ class Bot(Translation):
             #other reactions
             await self.remove_reaction(reaction.message.id, reaction.message.channel.id, reaction.emoji, user.id)
 
+    async def raw_rule_reaction_add(self, payload:discord.RawReactionActionEvent):
+        if payload.message_id != self.reaction_authentication_msg.id:
+            return None
+        if str(payload.emoji) == "✅":
+            #agreement
+            await self.add_role(payload.member, self.config["reaction_authentication_role"])
+        elif str(payload.emoji) == "❌":
+            #disagreement
+            await self.disagreement_rule(payload.member)
+            await self.remove_reaction(payload.message_id, payload.channel_id, payload.emoji, payload.user_id)
+        else:
+            #other reactions
+            await self.remove_reaction(payload.message_id, payload.channel_id, payload.emoji, payload.user_id)
+
     #reaction authentication system
     async def rule_reaction_remove(self, reaction:discord.Reaction, user:discord.Member):
         if reaction.message != self.reaction_authentication_msg:
@@ -707,13 +736,20 @@ class Bot(Translation):
         if reaction.emoji == "✅":
             await self.remove_role(user, self.config["reaction_authentication_role"])
         return None
+    
+    async def raw_rule_reaction_remove(self, payload:discord.RawReactionActionEvent):
+        if payload.message_id != self.reaction_authentication_msg.id:
+            return None
+        if str(payload.emoji) == "✅":
+            await self.remove_role(self.client.get_guild(payload.guild_id).get_member(payload.user_id), self.config["reaction_authentication_role"])
+        return None
 
     async def disagreement_rule(self, member:discord.Member, *, op:str="op2"):
         fp = self.sys_msg_dir + "disagreement_msg.txt"
         with open(fp, "r", encoding="utf-8") as f:
             content = f.read()
         try:
-            msg = await self.client.send_message(member, content)
+            msg = await member.send(content)
         except:
             log = log_format.disagreement_rule_action_fail.format(
                 op = self.op_role_mention[op],
@@ -721,19 +757,19 @@ class Bot(Translation):
                 target = self.save_author_mention(member),
                 log = "DMの送信失敗。"
             )
-            await self.client.send_message(self.client.get_channel(self.config["admin_action_ch_id"]), log)
+            await self.client.get_channel(self.config["admin_action_ch_id"]).send(log)
             return None
         try:
             await self.__kick(member.id)
         except:
-            await self.client.delete_message(msg)
+            await msg.delete()
             log = log_format.disagreement_rule_action_fail.format(
                 op = self.op_role_mention[op],
                 time = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
                 target = self.save_author_mention(member),
                 log = "DMの送信成功。キックに__失敗__。送信済みDMを削除。"
             )
-            await self.client.send_message(self.client.get_channel(self.config["admin_action_ch_id"]), log)
+            await self.client.get_channel(self.config["admin_action_ch_id"]).send(log)
             return None
         return None
 
@@ -743,18 +779,33 @@ class Bot(Translation):
             return None
         if reaction.emoji != "✅":
             return None
-        role_count = self.__count_role(reaction.message.server)
+        role_count = self.__count_role(reaction.message.guild)
         result = "```\n"
-        for role in reaction.message.server.role_hierarchy:
+        for role in reaction.message.guild.roles:
             result += "{0} : {1}人\n".format(role.name, str(role_count[role.name]))
         result += "```"
-        await self.client.edit_message(self.count_role_msg, result)
+        await self.count_role_msg.edit(content=result)
         await self.remove_reaction(self.count_role_msg.id, self.count_role_msg.channel.id, "✅", user.id)
+    
+    async def raw_count_role(self, payload:discord.RawReactionActionEvent):
+        if payload.message_id != self.count_role_msg.id:
+            return None
+        if str(payload.emoji) != "✅":
+            return None
+        server = self.client.get_guild(payload.guild_id)
+        role_count = self.__count_role(server)
+        result = "```\n"
+        for role in server.roles:
+            result += "{0} : {1}人\n".format(role.name, str(role_count[role.name]))
+        result += "```"
+        await self.count_role_msg.edit(content=result)
+        await self.remove_reaction(self.count_role_msg.id, self.count_role_msg.channel.id, "✅", payload.user_id)
         
-    def __count_role(self, server:discord.Server=None):
+    def __count_role(self, server:discord.Guild=None):
         server = self.client.get_server(self.config["action_server_id"]) if server is None else server
         role_count = dict()
         role_names = [r.name for r in server.roles]
+        role_names.reverse()
         for role_name in role_names:
             role_count[role_name] = 0
         for member in server.members:
@@ -762,149 +813,155 @@ class Bot(Translation):
                 role_count[role_name] += 1
         return role_count
 
-    @asyncio.coroutine
-    def remove_reaction(self, msg_id, ch_id, emoji, user_id):
-        try:
-            emoji = '{}:{}'.format(emoji.name, emoji.id)
-        except:
-            pass
-        yield from self.client.http.remove_reaction(msg_id, ch_id, emoji, user_id)
+    async def remove_reaction(self, msg_id, ch_id, emoji, user_id):
+        emoji = self._emoji_reaction(emoji)
+        await self.client.http.remove_reaction(ch_id, msg_id, emoji, user_id)
+
+    def _emoji_reaction(self, emoji):
+        if isinstance(emoji, discord.Reaction):
+            emoji = emoji.emoji
+
+        if isinstance(emoji, discord.Emoji):
+            return '%s:%s' % (emoji.name, emoji.id)
+        if isinstance(emoji, discord.PartialEmoji):
+            return emoji._as_reaction()
+        if isinstance(emoji, str):
+            # Reactions can be in :name:id format, but not <:name:id>.
+            # No existing emojis have <> in them, so this should be okay.
+            return emoji.strip('<>')
 
     #voice log
-    async def save_voice_log(self, before:discord.Member, after:discord.Member):
+    async def save_voice_log(self, member:discord.Member, before:discord.VoiceState, after:discord.VoiceState):
         action = self.voice_action(before, after)
         if action is None:
-            self.voice_user_update(before, after)
+            self.voice_user_update(before, after, member)
         elif action == "join":
             if self.voice_start_check(after):
-                await self.voice_start_action(after)
-            self.voice_join_action(after)
+                await self.voice_start_action(after, member)
+            self.voice_join_action(after, member)
         elif action == "remove":
-            self.voice_remove_action(before)
+            self.voice_remove_action(before, member)
             if self.voice_finish_check(before):
                 await self.voice_finish_action(before)
         elif action == "move":
-            await self.voice_move_action(before, after)
+            await self.voice_move_action(before, after, member)
         else:
             pass
     
-    def voice_action(self, before:discord.Member, after:discord.Member) -> str:
-        if ((before.voice.voice_channel is None) or before.voice.is_afk) and (after.voice.voice_channel is not None): #user join voice channel
+    def voice_action(self, before:discord.VoiceState, after:discord.VoiceState) -> str:
+        if ((before.channel is None) or before.afk) and (after.channel is not None): #user join voice channel
             return "join"
-        elif (before.voice.voice_channel is not None) and ((after.voice.voice_channel is None) or after.voice.is_afk): #user remove voice channel
+        elif (before.channel is not None) and ((after.channel is None) or after.afk): #user remove voice channel
             return "remove"
-        elif before.voice.voice_channel != after.voice.voice_channel: #user move voice chanel
+        elif before.channel != after.channel: #user move voice chanel
             return "move"
         else: #status update
             return None
     
-    def save_voice_channel(self, ch:discord.Channel) -> str:
-        if isinstance(ch, discord.Channel):
+    def save_voice_channel(self, ch:discord.VoiceChannel) -> str:
+        if isinstance(ch, discord.VoiceChannel):
             return "{0} (ID: {1})".format(ch.name, ch.id)
         return ""
 
-    def count_voice_members(self, ch:discord.Channel) -> int:
-        return len(ch.voice_members)
+    def count_voice_members(self, ch:discord.VoiceChannel) -> int:
+        return len(ch.members)
 
-    def voice_join_action(self, after:discord.Member):
-        fp = self.voice_log.format(after.voice.voice_channel.id)
+    def voice_join_action(self, after:discord.VoiceState, member:discord.Member):
+        fp = self.voice_log.format(after.channel.id)
         status = log_format.voice_status.format(
-            self_mic = "無効" if after.voice.self_mute else "有効",
-            self_speaker = "無効" if after.voice.self_deaf else "有効",
-            mic = "無効" if after.voice.mute else "有効",
-            speaker = "無効" if after.voice.deaf else "有効"
+            self_mic = "無効" if after.self_mute else "有効",
+            self_speaker = "無効" if after.self_deaf else "有効",
+            mic = "無効" if after.mute else "有効",
+            speaker = "無効" if after.deaf else "有効"
         )
         content = log_format.voice_join.format(
             time = datetime.datetime.now().strftime("%Y:%m:%dT%H:%M:%S"),
-            count = str(self.count_voice_members(after.voice.voice_channel)),
-            user = self.save_author(after),
-            user_id = after.id,
+            count = str(self.count_voice_members(after.channel)),
+            user = self.save_author(member),
             status = status
         )
         self.write_file(fp, content)
     
-    def voice_remove_action(self, before:discord.Member):
-        fp = self.voice_log.format(before.voice.voice_channel.id)
+    def voice_remove_action(self, before:discord.VoiceState, member:discord.Member):
+        fp = self.voice_log.format(before.channel.id)
         status = log_format.voice_status.format(
-            self_mic = "無効" if before.voice.self_mute else "有効",
-            self_speaker = "無効" if before.voice.self_deaf else "有効",
-            mic = "無効" if before.voice.mute else "有効",
-            speaker = "無効" if before.voice.deaf else "有効"
+            self_mic = "無効" if before.self_mute else "有効",
+            self_speaker = "無効" if before.self_deaf else "有効",
+            mic = "無効" if before.mute else "有効",
+            speaker = "無効" if before.deaf else "有効"
         )
         content = log_format.voice_remove.format(
             time = datetime.datetime.now().strftime("%Y:%m:%dT%H:%M:%S"),
-            count = str(self.count_voice_members(before.voice.voice_channel)),
-            user = self.save_author(before),
-            user_id = before.id,
+            count = str(self.count_voice_members(before.channel)),
+            user = self.save_author(member),
             status = status
         )
         self.write_file(fp, content)
 
-    def voice_user_update(self, before:discord.Member, after:discord.Member):
-        fp = self.voice_log.format(after.voice.voice_channel.id)
-        if after.voice.deaf != before.voice.deaf:
+    def voice_user_update(self, before:discord.VoiceState, after:discord.VoiceState, member:discord.Member):
+        fp = self.voice_log.format(after.channel.id)
+        if after.deaf != before.deaf:
             status = log_format.voice_change_status_server.format(
                 status = "サーバースピーカー",
-                action = "無効" if after.voice.deaf else "有効"
+                action = "無効" if after.deaf else "有効"
             )
-        elif after.voice.mute != before.voice.mute:
+        elif after.mute != before.mute:
             status = log_format.voice_change_status_server.format(
                 status = "サーバーマイク",
-                action = "無効" if after.voice.mute else "有効"
+                action = "無効" if after.mute else "有効"
             )
-        elif after.voice.self_deaf != before.voice.self_deaf:
+        elif after.self_deaf != before.self_deaf:
             status = log_format.voice_change_status_self.format(
                 status = "スピーカー",
-                action = "無効" if after.voice.self_deaf else "有効"
+                action = "無効" if after.self_deaf else "有効"
             )
-        elif after.voice.self_mute != before.voice.self_mute:
+        elif after.self_mute != before.self_mute:
             status = log_format.voice_change_status_self.format(
                 status = "マイク",
-                action = "無効" if after.voice.self_mute else "有効"
+                action = "無効" if after.self_mute else "有効"
             )
         else:
             return None
         content = log_format.voice_change.format(
             time = datetime.datetime.now().strftime("%Y:%m:%dT%H:%M:%S"),
-            count = str(self.count_voice_members(after.voice.voice_channel)),
-            user = self.save_author(after),
-            user_id = after.id,
+            count = str(self.count_voice_members(after.channel)),
+            user = self.save_author(member),
             content = status
         )
         self.write_file(fp, content)
     
-    def voice_start_check(self, after:discord.Member) -> bool:
-        return not os.path.exists(self.voice_log.format(after.voice.voice_channel.id))
+    def voice_start_check(self, after:discord.VoiceState) -> bool:
+        return not os.path.exists(self.voice_log.format(after.channel.id))
     
-    def voice_finish_check(self, before:discord.Member) -> bool:
-        return len(before.voice.voice_channel.voice_members) == 0
+    def voice_finish_check(self, before:discord.VoiceState) -> bool:
+        return len(before.channel.members) == 0
     
-    async def voice_start_action(self, after:discord.Member):
+    async def voice_start_action(self, after:discord.VoiceState, member:discord.Member):
         start_time = datetime.datetime.now().strftime("%Y:%m:%dT%H:%M:%S")
-        fp = self.voice_log.format(after.voice.voice_channel.id)
+        fp = self.voice_log.format(after.channel.id)
         content = log_format.voice_start.format(
             time = start_time,
-            name = after.voice.voice_channel.name,
-            id = after.voice.voice_channel.id
+            name = after.channel.name,
+            id = after.channel.id
         )
         self.write_file(fp, content)
         content = log_format.voice_start_message.format(
             time = start_time,
-            user = self.save_author(after),
-            user_id = after.id,
-            ch_name = after.voice.voice_channel.name,
-            ch_id = after.voice.voice_channel.id
+            user = self.save_author(member),
+            user_id = member.id,
+            ch_name = after.channel.name,
+            ch_id = after.channel.id
         )
         ch = self.client.get_channel(self.config["send_voice_log_ch"])
-        await self.client.send_message(ch, content)
+        await ch.send(content)
     
-    async def voice_finish_action(self, before:discord.Member):
+    async def voice_finish_action(self, before:discord.VoiceState):
         # pass AFK channel
-        if before.voice.voice_channel.id == self.config["AFK_channel"]:
+        if before.channel.id == self.config["AFK_channel"]:
             return None
         
         finish_time = datetime.datetime.now()
-        fp = self.voice_log.format(before.voice.voice_channel.id)
+        fp = self.voice_log.format(before.channel.id)
         log_file = open(fp, "r", encoding="utf-8")
         log_line = log_file.readline()
         r = re.search(r"\d{4}:\d{2}:\d{2}T\d{2}:\d{2}:\d{2}", log_line)
@@ -930,29 +987,30 @@ class Bot(Translation):
         log_file.close()
         os.remove(fp)
         content = log_format.voice_finish_message.format(
-            ch_name = before.voice.voice_channel.name,
-            ch_id = before.voice.voice_channel.id,
+            ch_name = before.channel.name,
+            ch_id = before.channel.id,
             time = finish_time,
             operating_time = operating_time
         )
         ch = self.client.get_channel(self.config["send_voice_log_ch"])
-        await self.client.send_file(ch, new_fp, content=content)
+        send_file = discord.File(fp=new_fp)
+        await ch.send(content=content, file=send_file)
 
-    async def voice_move_action(self, before:discord.Member, after:discord.Member):
-        fp = self.voice_log.format(before.voice.voice_channel.id)
+    async def voice_move_action(self, before:discord.VoiceState, after:discord.VoiceState, member:discord.Member):
+        fp = self.voice_log.format(before.channel.id)
         status = log_format.voice_status.format(
-            self_mic = "無効" if before.voice.self_mute else "有効",
-            self_speaker = "無効" if before.voice.self_deaf else "有効",
-            mic = "無効" if before.voice.mute else "有効",
-            speaker = "無効" if before.voice.deaf else "有効"
+            self_mic = "無効" if before.self_mute else "有効",
+            self_speaker = "無効" if before.self_deaf else "有効",
+            mic = "無効" if before.mute else "有効",
+            speaker = "無効" if before.deaf else "有効"
         )
         content = log_format.voice_remove.format(
             time = datetime.datetime.now().strftime("%Y:%m:%dT%H:%M:%S"),
-            count = str(self.count_voice_members(before.voice.voice_channel)),
-            user = self.save_author(before),
-            user_id = before.id,
+            count = str(self.count_voice_members(before.channel)),
+            user = self.save_author(member),
+            user_id = member.id,
             status = log_format.voice_move_before.format(
-                ch = self.save_voice_channel(before.voice.voice_channel),
+                ch = self.save_voice_channel(before.channel),
                 status = status
             )
         )
@@ -960,21 +1018,21 @@ class Bot(Translation):
         if self.voice_finish_check(before):
             await self.voice_finish_action(before)
         if self.voice_start_check(after):
-            await self.voice_start_action(after)
-        fp = self.voice_log.format(after.voice.voice_channel.id)
+            await self.voice_start_action(after, member)
+        fp = self.voice_log.format(after.channel.id)
         status = log_format.voice_status.format(
-            self_mic = "無効" if after.voice.self_mute else "有効",
-            self_speaker = "無効" if after.voice.self_deaf else "有効",
-            mic = "無効" if after.voice.mute else "有効",
-            speaker = "無効" if after.voice.deaf else "有効"
+            self_mic = "無効" if after.self_mute else "有効",
+            self_speaker = "無効" if after.self_deaf else "有効",
+            mic = "無効" if after.mute else "有効",
+            speaker = "無効" if after.deaf else "有効"
         )
         content = log_format.voice_join.format(
             time = datetime.datetime.now().strftime("%Y:%m:%dT%H:%M:%S"),
-            count = str(self.count_voice_members(after.voice.voice_channel)),
-            user = self.save_author(after),
-            user_id = after.id,
+            count = str(self.count_voice_members(after.channel)),
+            user = self.save_author(member),
+            user_id = member.id,
             status = log_format.voice_move_after.format(
-                ch = self.save_voice_channel(after.voice.voice_channel),
+                ch = self.save_voice_channel(after.channel),
                 status = status
             )
         )
@@ -998,7 +1056,7 @@ class Bot(Translation):
         del_day = self.config["ban_del_msg"] if cmd.get("day") is None else (int(cmd.get("day")) if 0 <= int(cmd.get("day")) < 8 else 0)
         dm = True if cmd.get("dm") == "true" else (False if cmd.get("dm") == "false" else self.config["ban_dm"])
         if dm:
-            if cmd.get("dm-original").lower() == "true":
+            if cmd.get("dm-original") == "true":
                 content = cmd.get("rest_last")
             else:
                 fp = self.sys_msg_dir + "ban_msg.txt"
@@ -1011,7 +1069,7 @@ class Bot(Translation):
         users_info = dict()
         for user_id in users_id:
             try:
-                users_info[user_id] = await self.client.get_user_info(user_id)
+                users_info[str(user_id)] = await self.client.fetch_user(user_id)
             except:
                 users_id.remove(user_id)
         accept_count = cancel_count = 1
@@ -1028,17 +1086,17 @@ class Bot(Translation):
         check = await self.check_execute_cmd(msg, accept_count, cancel_count, content=check_content)
         if check:
             # accept
-            await self.client.send_message(msg.channel, log_format.cmd_accept)
+            await msg.channel.send(log_format.cmd_accept)
         else:
             # cancel
-            await self.client.send_message(msg.channel, log_format.cmd_cancel)
+            await msg.channel.send(log_format.cmd_cancel)
             return None
         
         result_list = list()
         for user_id in users_id:
             result = dict()
             try:
-                result["user_info"] = users_info[user_id]
+                result["user_info"] = users_info[str(user_id)]
                 try:
                     if content is None:
                         raise "Content is None"
@@ -1051,7 +1109,7 @@ class Bot(Translation):
                     result["ban"] = True
                 except:
                     result["ban"] = False
-            except discord.errors.NotFound:
+            except discord.NotFound:
                 result["user_info"] = "User ID:{} is not found.".format(user_id)
             except:
                 result["user_info"] = "unexpected error."
@@ -1065,8 +1123,8 @@ class Bot(Translation):
             details = "\n".join(result_list)
         )
         ch = self.client.get_channel(self.config["admin_action_ch_id"])
-        await self.client.send_message(msg.channel, log_format.ban_result)
-        await self.client.send_message(ch, content)
+        await msg.channel.send(log_format.ban_result)
+        await ch.send(content)
     
     async def unban(self, msg:discord.Message):
         start_time = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
@@ -1076,13 +1134,13 @@ class Bot(Translation):
         for user_id in users_id:
             result = dict()
             try:
-                result["user_info"] = await self.client.get_user_info(user_id)
+                result["user_info"] = await self.fetch_user(user_id)
                 try:
                     await self.__unban(user_id)
                     result["unban"] = True
                 except:
                     result["unban"] = False
-            except discord.errors.NotFound:
+            except discord.NotFound:
                 result["user_info"] = "User ID:{} is not found.".format(user_id)
             except:
                 result["user_info"] = "unexpected error."
@@ -1097,8 +1155,8 @@ class Bot(Translation):
             details = "\n".join(result_list)
         )
         ch = self.client.get_channel(self.config["admin_action_ch_id"])
-        await self.client.send_message(msg.channel, log_format.unban_result)
-        await self.client.send_message(ch, content)
+        await msg.channel.send(log_format.unban_result)
+        await ch.send(content)
 
     async def kick(self, msg:discord.Message, * , op:str="op2"):
         start_time = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
@@ -1120,7 +1178,7 @@ class Bot(Translation):
         users_info = dict()
         for user_id in users_id:
             try:
-                users_info[user_id] = await self.client.get_user_info(user_id)
+                users_info[str(user_id)] = await self.client.fetch_user(user_id)
             except:
                 users_id.remove(user_id)
         accept_count = cancel_count = 1
@@ -1137,17 +1195,17 @@ class Bot(Translation):
         check = await self.check_execute_cmd(msg, accept_count, cancel_count, content=check_content)
         if check:
             # accept
-            await self.client.send_message(msg.channel, log_format.cmd_accept)
+            await msg.channel.send(log_format.cmd_accept)
         else:
             # cancel
-            await self.client.send_message(msg.channel, log_format.cmd_cancel)
+            await msg.channel.send(log_format.cmd_cancel)
             return None
 
         result_list = list()
         for user_id in users_id:
             result = dict()
             try:
-                result["user_info"] = users_info[user_id]
+                result["user_info"] = users_info[str(user_id)]
                 try:
                     if content is None:
                         raise "Content is None"
@@ -1160,7 +1218,7 @@ class Bot(Translation):
                     result["kick"] = True
                 except:
                     result["kick"] = False
-            except discord.errors.NotFound:
+            except discord.NotFound:
                 result["user_info"] = "User ID:{} is not found.".format(user_id)
             except:
                 result["user_info"] = "unexpected error."
@@ -1174,15 +1232,15 @@ class Bot(Translation):
             details = "\n".join(result_list)
         )
         ch = self.client.get_channel(self.config["admin_action_ch_id"])
-        await self.client.send_message(msg.channel, log_format.kick_result)
-        await self.client.send_message(ch, content)
+        await msg.channel.send(log_format.kick_result)
+        await ch.send(content)
 
     def result_text(self, result:dict, action:str) -> str:
         if isinstance(result["user_info"], discord.User):
             return log_format.user_info.format(
                 user = self.save_author(result["user_info"]),
                 user_id = result["user_info"].id,
-                user_create = result["user_info"].created_at,
+                user_create = result["user_info"].created_at.strftime("%Y/%m/%d %H:%M:%S"),
                 dm = "success" if result["dm"] else "fail",
                 action = action,
                 judg = "success" if result[action] else "fail"
@@ -1190,64 +1248,42 @@ class Bot(Translation):
         else:
             return result["user_info"]
         
-    @asyncio.coroutine
-    def __ban(self, user_id,  delete_message_days=1, server_id=None):
+    async def __ban(self, user_id:int,  delete_message_days=1, server_id:int=None):
         server_id = server_id if server_id is not None else self.config["action_server_id"]
-        yield from self.client.http.ban(user_id, server_id, delete_message_days)
+        await self.client.http.ban(user_id, server_id, delete_message_days)
 
-    @asyncio.coroutine
-    def __unban(self, user_id, server_id=None):
+    async def __unban(self, user_id:int, server_id:int=None):
         server_id = server_id if server_id is not None else self.config["action_server_id"]
-        yield from self.client.http.unban(user_id, server_id)
+        await self.client.http.unban(user_id, server_id)
     
-    @asyncio.coroutine
-    def __kick(self, user_id, server_id=None):
+    async def __kick(self, user_id:int, server_id:int=None):
         server_id = server_id if server_id is not None else self.config["action_server_id"]
-        yield from self.client.http.kick(user_id, server_id)
+        await self.client.http.kick(user_id, server_id)
 
     def get_users_id(self, data:str) -> list:
-        return re.findall(r"\d+", data)
+        match = re.findall(r"\d+", data)
+        return [int(x) for x in match]
     
     async def get_users_info(self, ids:list):
         users_list = list()
         for id in ids:
-            users_list.append(await self.client.get_user_info(id))
+            users_list.append(await self.client.fetch_info(id))
         return users_list
     
-    @asyncio.coroutine
-    def send_dm_message(self, user_id, content=None):
-        channel_id = yield from self.get_user_private_channel_by_id(user_id)
-        data = yield from self.client.http.send_message(channel_id, content, guild_id=None, tts=None, embed=None)
-        channel = self.client.get_channel(data.get('channel_id'))
-        message = self.client.connection._create_message(channel=channel, **data)
-        return message
+    async def send_dm_message(self, user_id:int, content=None):
+        ch = await self.get_user_private_channel_by_id(user_id)
+        return await ch.send(content)
 
-    @asyncio.coroutine
-    def get_user_private_channel_by_id(self, id:str) -> str:
-        found = self.client.connection._get_private_channel_by_user(id)
-        if found is None:
-            # Couldn't find the user, so start a PM with them first.
-            channel = yield from self.start_private_message_by_id(id)
-            return channel.id
-        else:
-            return found.id
-    
-    @asyncio.coroutine
-    def get_user_private_channel_by_id2(self, id:str) -> str:
-        found = self.client.connection._get_private_channel_by_user(id)
-        if found is None:
-            # Couldn't find the user, so start a PM with them first.
-            channel = yield from self.start_private_message_by_id(id)
-            return channel
-        else:
+    async def get_user_private_channel_by_id(self, user_id:int) -> discord.DMChannel:
+        found = self.dm_channel(user_id)
+        if found is not None:
             return found
 
-    @asyncio.coroutine
-    def start_private_message_by_id(self, id:str) -> discord.Channel:
-        data = yield from self.client.http.start_private_message(id)
-        channel = discord.PrivateChannel(me=self.client.user, **data)
-        self.client.connection._add_private_channel(channel)
-        return channel
+        data = await self.client.http.start_private_message(user_id)
+        return self.client._connection.add_dm_channel(data)
+
+    def dm_channel(self, user_id:int):
+        return self.client._connection._get_private_channel_by_user(user_id)
 
     ## spam/alert
     async def spam_alert(self, msg:discord.Message):
@@ -1298,7 +1334,7 @@ class Bot(Translation):
             content = msg.content, 
             **kwargs
         )
-        await self.client.send_message(self.admin_action_ch, content)
+        await self.admin_action_ch.send(content)
 
     async def spam_cmd(self, msg:discord.Message, _type="local", *, op:str="op3"):
         try:
@@ -1310,7 +1346,7 @@ class Bot(Translation):
         except:
             pass
         finally:
-            await self.client.send_message(msg.channel, self.show_spam())
+            await msg.channel.send(self.show_spam())
     
     async def alert_cmd(self, msg:discord.Message, *, op:str="op3"):
         try:
@@ -1321,7 +1357,7 @@ class Bot(Translation):
         except:
             pass
         finally:
-            await self.client.send_message(msg.channel, self.show_alert())
+            await msg.channel.send(self.show_alert())
 
     def show_spam(self):
         fp = self.bot_dir + "spam.txt"
@@ -1371,19 +1407,19 @@ class Bot(Translation):
         content = msg.content.split("\n")
         match = re.search(r"\d+", content[0])
         if match is not None:
-            ch_id = match.group(0)
+            ch_id = int(match.group(0))
         else:
             # Channel not specified
-            await self.client.send_message(msg.channel, log_format.channel_not_specified)
+            await msg.channel.send(log_format.channel_not_specified)
             return None
         ch = self.client.get_channel(ch_id)
         if ch is None:
             # channel id is different
-            await self.client.send_message(msg.channel, log_format.channel_different)
+            await msg.channel.send(log_format.channel_different)
             return None
-        if not self.check_permission_send_msg(ch, ch.server.get_member(self.client.user.id)):
+        if not self.check_permission_send_msg(ch, ch.guild.get_member(self.client.user.id)):
             # can't send message
-            await self.client.send_message(msg.channel, log_format.cmd_nopermissions.format(words.send_messages))
+            await msg.channel.send(log_format.cmd_nopermissions.format(words.send_messages))
             return None
         try:
             content = "\n".join(content[1:])
@@ -1401,20 +1437,20 @@ class Bot(Translation):
         check = await self.check_execute_cmd(msg, accept_count, cancel_count, content=check_content)
         if check:
             # accept
-            await self.client.send_message(msg.channel, log_format.cmd_accept)
+            await msg.channel.send(log_format.cmd_accept)
         else:
             # cancel
-            await self.client.send_message(msg.channel, log_format.cmd_cancel)
+            await msg.channel.send(log_format.cmd_cancel)
             return None
         file_list = self.transfer_files(msg)
-        send_message = await self.client.send_message(ch, content)
+        send_message = await ch.send(content)
         await self.send_files(ch, file_list)
         result = log_format.send_message_result.format(
-            server = send_message.channel.server.id,
+            server = send_message.channel.guild.id,
             ch = send_message.channel.id,
             msg = send_message.id
         )
-        await self.client.send_message(msg.channel, result)
+        await msg.channel.send(result)
         
     async def edit_msg(self, msg:discord.Message, dm:bool=False, * , op:str="op3"):
         content_list = msg.content.split("\n")
@@ -1422,7 +1458,7 @@ class Bot(Translation):
             url = content_list[1]
         except:
             #url is not found
-            await self.client.send_message(msg.channel, log_format.msg_not_specified)
+            await msg.channel.send(log_format.msg_not_specified)
             return None
         if dm:
             pattern = r"@me/\d+/\d+"
@@ -1433,21 +1469,21 @@ class Bot(Translation):
             server_id, ch_id, msg_id = self.split_msg_url(match.group(0))
         else:
             #not match
-            await self.client.send_message(msg.channel, log_format.msg_not_specified)
+            await msg.channel.send(log_format.msg_not_specified)
             return None
         try:
             target = await self.search_message(ch_id, msg_id)
         except:
-            await self.client.send_message(msg.channel, log_format.msg_get_error)
+            await msg.channel.send(log_format.msg_get_error)
         if target.author != self.client.user:
             #target message author is not bot.
-            await self.client.send_message(msg.channel, log_format.msg_author_different)
+            await msg.channel.send(log_format.msg_author_different)
             return None
         try:
             content = "\n".join(content_list[2:])
         except:
             # content is None
-            await self.client.send_message(msg.channel, log_format.msg_not_difinition)
+            await msg.channel.send(log_format.msg_not_difinition)
             return None
         #check
         accept_count = cancel_count = 1
@@ -1463,35 +1499,36 @@ class Bot(Translation):
         check = await self.check_execute_cmd(msg, accept_count, cancel_count, content=check_content)
         if check:
             # accept
-            await self.client.send_message(msg.channel, log_format.cmd_accept)
+            await msg.channel.send(log_format.cmd_accept)
         else:
             # cancel
-            await self.client.send_message(msg.channel, log_format.cmd_cancel)
+            await msg.channel.send(log_format.cmd_cancel)
             return None
         try:
-            await self.client.edit_message(target, new_content=content)
-            await self.client.send_message(msg.channel, log_format.edit_message_success)
+            await target.edit(content=content)
+            await msg.channel.send(log_format.edit_message_success)
             return None
         except:
-            await self.client.send_message(msg.channel, log_format.cmd_fail)
+            await msg.channel.send(log_format.cmd_fail)
             return None
 
-    async def send_files(self, ch:discord.Channel, file_list:list):
+    async def send_files(self, ch:discord.abc.GuildChannel, file_list:list):
         for fl in file_list:
             if fl["type"] == "url":
-                await self.client.send_message(ch, fl["url"])
+                await ch.send(fl["url"])
             elif fl["type"] == "file":
-                await self.client.send_file(ch, fl["fp"])
+                send_file = discord.File(fp=fl["fp"])
+                await ch.send(file=send_file)
                 #delete tmp file
                 os.remove(fl["fp"])
 
     def split_msg_url(self, string:str):
-        return tuple(string.split("/"))
+        return (int(n) for n in string.split("/"))
         
-    @asyncio.coroutine
-    def search_message(self, ch_id, msg_id):
-        data = yield from self.client.http.get_message(ch_id, msg_id)
-        return self.client.connection._create_message(channel=self.client.get_channel(ch_id), **data)
+    async def search_message(self, ch_id, msg_id):
+        data = await self.client.http.get_message(ch_id, msg_id)
+        channel = self.client.get_channel(ch_id)
+        return self.client._connection.create_message(channel=channel, data=data)
 
     def transfer_files(self, msg:discord.Message) -> list:
         if not len(msg.attachments) > 0:
@@ -1501,10 +1538,10 @@ class Bot(Translation):
         urllib.request.install_opener(opener)
         file_list = list()
         for attachment in msg.attachments:
-            url = attachment["proxy_url"]
+            url = attachment.proxy_url
             info = dict()
-            if attachment["size"] < 8*1024*1024:
-                file_name = self.tmp + attachment["filename"]
+            if attachment.size < 8*1024*1024:
+                file_name = self.tmp + attachment.filename
                 info["type"] = "file"
                 info["fp"] = file_name
                 urllib.request.urlretrieve(url=url, filename=file_name) # save file.
@@ -1520,14 +1557,14 @@ class Bot(Translation):
         content_list = msg.content.split("\n")
         match = re.search(r"\d+", content_list[0])
         if match is not None:
-            user_id = match.group(0)
+            user_id = int(match.group(0))
         else:
             # Channel not specified
-            await self.client.send_message(msg.channel, log_format.user_not_specified)
+            await msg.channel.send(log_format.user_not_specified)
             return None
-        member = msg.server.get_member(user_id)
+        member = msg.guild.get_member(user_id)
         if member is None:
-            await self.client.send_message(msg.channel, log_format.user_not_found)
+            await msg.channel.send(log_format.user_not_found)
         try:
             content = "\n".join(content_list[1:])
         except:
@@ -1544,24 +1581,25 @@ class Bot(Translation):
         check = await self.check_execute_cmd(msg, accept_count, cancel_count, content=check_content)
         if check:
             # accept
-            await self.client.send_message(msg.channel, log_format.cmd_accept)
+            await msg.channel.send(log_format.cmd_accept)
         else:
             # cancel
-            await self.client.send_message(msg.channel, log_format.cmd_cancel)
+            await msg.channel.send(log_format.cmd_cancel)
             return None
         file_list = self.transfer_files(msg)
         try:
-            send_message = await self.send_dm_message(member.id, content)
+            send_message = await self.send_dm_message(user_id=member.id, content=content)
             await self.send_files(send_message.channel, file_list)
             result = log_format.send_message_result.format(
                 server = "@me",
                 ch = send_message.channel.id,
                 msg = send_message.id
             )
-        except:
+        except Exception as e:
+            print(e)
             result = log_format.send_dm_fail
         finally:
-            await self.client.send_message(msg.channel, result)
+            await msg.channel.send(result)
 
     async def del_dm(self, msg:discord.Message, *, op:str="op2"):
         content_list = msg.content.split("\n")
@@ -1569,22 +1607,22 @@ class Bot(Translation):
             url = content_list[1]
         except:
             #url is not found
-            await self.client.send_message(msg.channel, log_format.msg_not_specified)
+            await msg.channel.send(log_format.msg_not_specified)
             return None
         match = re.search(r"@me/\d+/\d+", url)
         if match:
             server_id, ch_id, msg_id = self.split_msg_url(match.group(0))
         else:
             #not match
-            await self.client.send_message(msg.channel, log_format.msg_not_specified)
+            await msg.channel.send(log_format.msg_not_specified)
             return None
         try:
             target = await self.search_message(ch_id, msg_id)
         except:
-            await self.client.send_message(msg.channel, log_format.msg_get_error)
+            await msg.channel.send(log_format.msg_get_error)
         if target.author != self.client.user:
             #target message author is not bot.
-            await self.client.send_message(msg.channel, log_format.msg_author_different)
+            await msg.channel.send(log_format.msg_author_different)
             return None
         accept_count = cancel_count = 1
         check_content = log_format.delete_dm.format(
@@ -1598,39 +1636,39 @@ class Bot(Translation):
         check = await self.check_execute_cmd(msg, accept_count, cancel_count, content=check_content)
         if check:
             # accept
-            await self.client.send_message(msg.channel, log_format.cmd_accept)
+            await msg.channel.send(log_format.cmd_accept)
         else:
             # cancel
-            await self.client.send_message(msg.channel, log_format.cmd_cancel)
+            await msg.channel.send(log_format.cmd_cancel)
             return None
         try:
-            await self.client.delete_message(target)
-            await self.client.send_message(msg.channel, log_format.del_message_success)
+            await target.delete()
+            await msg.channel.send(log_format.del_message_success)
         except:
-            await seld.client.send_message(msg.channel, log_format.del_message_fail)
+            await msg.channel.send(log_format.del_message_fail)
 
     ##user
     async def user(self, msg:discord.Message, *, op:str="op2"):
         match = re.search(r"\d+", msg.content)
         if match is None:
-            await self.client.send_message(msg.channel, log_format.user_not_specified)
+            await msg.channel.send(log_format.user_not_specified)
             return None
         try:
-            user = await self.client.get_user_info(match.group(0))
+            user = await self.client.fetch_user(int(match.group(0)))
         except:
-            await self.client.send_message(msg.channel, log_format.user_not_found)
+            await msg.channel.send(log_format.user_not_found)
             return None
         content = log_format.get_user_info_result.format(
             user_id = user.id,
-            user_name = user.name,
+            user_name = self.save_author(user),
             bot = str(user.bot),
             created_at = user.created_at.strftime("%Y/%m/%d %H:%M:%S"),
             avatar = user.avatar_url,
-            server = self.server_member(user, msg.server)
+            server = self.server_member(user, msg.guild)
         )
-        await self.client.send_message(msg.channel, content)
+        await msg.channel.send(content)
     
-    def server_member(self, user:discord.User, server:discord.Server):
+    def server_member(self, user:discord.User, server:discord.Guild):
         member = server.get_member(user.id)
         if member is None:
             return str(False)
@@ -1644,7 +1682,7 @@ class Bot(Translation):
 
     async def user_exist(self, user_id:str) -> bool:
         try:
-            await self.client.get_user_info(user_id)
+            await self.client.fetch_user(user_id)
             return True
         except:
             return False
@@ -1653,54 +1691,55 @@ class Bot(Translation):
     async def stop(self, msg:discord.Message, * , op:str="op2"):
         #search target users
         targets = re.findall(r"\d+", msg.content, re.S)
-        server = msg.server
+        server = msg.guild
         result = list()
         for target in targets:
-            member = server.get_member(target)
+            member = server.get_member(int(target))
             if member is not None:
                 await self.add_roles(member, {self.config["stop"]}, server.id)
                 result.append(member)
         content = log_format.stop_result.format(users="\n".join([self.save_author_mention(m) for m in result]))
-        await self.client.send_message(msg.channel, content)
+        await msg.channel.send(content)
 
     ## get log
     async def get_msg_log(self, msg:discord.Message, dm:bool=False, *, op:str="op3"):
         match = re.search(r"\d+", msg.content.split("\n")[0])
         if match is not None:
-            ch_id = match.group(0)
+            ch_id = int(match.group(0))
         else:
             # Channel not specified
             content = log_format.user_not_specified if dm else log_format.channel_not_specified
-            await self.client.send_message(msg.channel, content)
+            await msg.channel.send(content)
             return None
         if dm:
             check = await self.user_exist(ch_id)
             if check:
-                ch = await self.get_user_private_channel_by_id2(ch_id)      
+                ch = await self.get_user_private_channel_by_id(ch_id)      
             else:
-                await self.client.send_message(msg.channel, log_format.user_different)
+                await msg.channel.send(log_format.user_different)
         else:
             ch = self.client.get_channel(ch_id)
         if ch is None:
             # channel id is different
             content = log_format.private_ch_not_found if dm else log_format.channel_different
-            await self.client.send_message(msg.channel, content)
+            await msg.channel.send(content)
             return None
         if not dm:
-            if not self.check_permission_read_message_history(ch, ch.server.get_member(self.client.user.id)):
+            if not self.check_permission_read_message_history(ch, ch.guild.get_member(self.client.user.id)):
                 # can't read message
-                await self.client.send_message(msg.channel, log_format.cmd_nopermissions.format(words.read_message_history))
+                await msg.channel.send(log_format.cmd_nopermissions.format(words.read_message_history))
                 return None
         
-        await self.client.send_message(msg.channel, log_format.cmd_accept)
+        await msg.channel.send(log_format.cmd_accept)
         # cmd start
         kwargs = self.spilit_function(msg.content, 2)
         fp, result = await self.logs_from(ch, **kwargs)
-        await self.client.send_file(msg.channel, fp, content=result) #send result and file
+        send_file = discord.File(fp=fp)
+        await msg.channel.send(result, file=send_file)
         os.remove(fp) #remove file
         return None
 
-    async def logs_from(self, channel:discord.Channel, limit:str="100", reverse:str="true", encoding:str="utf-8", **kwargs) -> str:
+    async def logs_from(self, channel:discord.abc.GuildChannel, limit:str="100", reverse:str="true", encoding:str="utf-8", **kwargs) -> str:
         start_time = datetime.datetime.now()
         limit = int(limit)
         reverse = False if reverse.lower().strip() == "false" else True
@@ -1710,7 +1749,7 @@ class Bot(Translation):
         fp = self.tmp + "msg_log.txt"
         counter = {"MsgCount": 0, "UserIDs" : set()}
         with open(fp, "w", encoding=encoding) as f:
-            async for msg in self.client.logs_from(channel, limit=limit, before=before, after=after, around=around, reverse=reverse):
+            async for msg in channel.history(limit=limit, before=before, after=after, around=around, oldest_first=reverse):
                 f.write(self.save_msg_log(msg, write=False))
                 self.logs_counter(msg, counter)
         logs_result = log_format.msg_log_result.format(
@@ -1731,16 +1770,16 @@ class Bot(Translation):
 
     def logs_counter(self, msg:discord.Message, counter:dict) -> dict:
         counter["MsgCount"] += 1
-        counter["UserIDs"].add(msg.author.id)
+        counter["UserIDs"].add(str(msg.author.id))
 
-    async def get_datetime_or_message(self, ch:discord.Channel, string:str):
+    async def get_datetime_or_message(self, ch:discord.abc.GuildChannel, string:str):
         if string is None:
             return None
         try:
             r = datetime.datetime.strptime(string, "%Y/%m/%dT%H:%M:%S")
         except:
             try:
-                r = await self.search_message(ch.id, string)
+                r = await self.search_message(ch.id, int(string))
             except:
                 r = None
         finally:
@@ -1749,7 +1788,7 @@ class Bot(Translation):
     def log_reesult_msg_or_datetime(self, target) -> str:
         if isinstance(target, discord.Message):
             return log_format.msg_url.format(
-                server = "@me" if target.server is None else target.server.id,
+                server = "@me" if target.guild is None else target.guild.id,
                 ch = target.channel.id,
                 msg = target.id
             )
@@ -1759,7 +1798,7 @@ class Bot(Translation):
             return words.unspecified
 
     async def ls(self, msg:discord.Message):
-        await self.client.send_message(msg.channel, cmd_msg.ls.format(bot=self.config["NAME"]))
+        await msg.channel.send(cmd_msg.ls.format(bot=self.config["NAME"]))
 
     async def system_message(self, msg:discord.Message, * , op:str="op3"):
         content_list = msg.content.split("\n")
@@ -1770,20 +1809,20 @@ class Bot(Translation):
         try:
             fp = self.bot_dir + content_list[1].lstrip("fp= ./").strip()
             if not os.path.exists(fp):
-                await self.client.send_message(msg.channel, log_format.file_is_not_exit)
+                await msg.channel.send(log_format.file_is_not_exit)
                 return None
         except:
-            await self.client.send_message(msg.channel, log_format.filepath_not_specified)
+            await msg.channel.send(log_format.filepath_not_specified)
             return None
         if action == "edit":
             if len(msg.attachments) > 0:
-                url = msg.attachments[0]["proxy_url"]
+                url = msg.attachments[0].proxy_url
                 copy_fp = self.update_system_message(fp, url=url)
             else:
                 try:
                     content = "\n".join(content_list[2:])
                 except:
-                    await self.client.send_message(msg.channel, log_format.new_content_not_specified)
+                    await msg.channel.send(log_format.new_content_not_specified)
                     return None
                 copy_fp = self.update_system_message(fp, content = content)
             await self.edit_system_message_report(msg.channel, fp, copy_fp)
@@ -1802,15 +1841,16 @@ class Bot(Translation):
             pass
         return copy_fp
 
-    async def edit_system_message_report(self, ch:discord.Channel, fp:str, copy_fp:str):
+    async def edit_system_message_report(self, ch:discord.abc.GuildChannel, fp:str, copy_fp:str):
         with open(fp, "r", encoding="utf-8") as f:
             content = f.read()
-        await self.client.send_file(ch, copy_fp, content=content)
+        send_file = discord.File(fp=fp)
+        await ch.send(content, file=send_file)
 
-    async def show_system_message(self, ch:discord.Channel, fp:str):
+    async def show_system_message(self, ch:discord.abc.GuildChannel, fp:str):
         with open(fp, "r", encoding="utf-8") as f:
             content = f.read()
-        await self.client.send_message(ch, content)
+        await ch.send(content)
 
     ## receive dm
     async def receive_dm(self, msg:discord.Message):
@@ -1822,9 +1862,9 @@ class Bot(Translation):
             content = msg.content
         )
         ch = self.client.get_channel(self.config["receive_dm_ch"])
-        await self.client.send_message(ch, content)
+        await ch.send(content)
 
-    async def receive_dm_edit(self, before:discord.Channel, after:discord.Channel):
+    async def receive_dm_edit(self, before:discord.abc.GuildChannel, after:discord.abc.GuildChannel):
         content = log_format.recieve_dm_edit.format(
             author = self.save_author_mention(after.author),
             time = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
@@ -1834,7 +1874,7 @@ class Bot(Translation):
             after = after.content
         )
         ch = self.client.get_channel(self.config["receive_dm_ch"])
-        await self.client.send_message(ch, content)
+        await ch.send(content)
     
     async def receive_dm_delete(self, msg:discord.Message):
         content = log_format.receive_dm_delete.format(
@@ -1845,30 +1885,28 @@ class Bot(Translation):
             content = msg.content
         )
         ch = self.client.get_channel(self.config["receive_dm_ch"])
-        await self.client.send_message(ch, content)
+        await ch.send(content)
 
     ## Control Role
-    @asyncio.coroutine
-    def replace_role(self, user_id:str, new_roles:list, server_id:str=None):
+    async def replace_role(self, user_id:int, new_roles, server_id:int=None):
         server_id = self.config["action_server_id"] if server_id is None else server_id
-        yield from self.client.http.replace_roles(user_id, server_id, new_roles)
+        payload = {'roles': tuple(new_roles)}
+        await self.client.http.edit_member(server_id, user_id, reason=None, **payload)
     
-    async def add_roles(self, member:discord.Member, roles:set, server_id:str=None):
+    async def add_roles(self, member:discord.Member, roles:set, server_id:int=None):
         member_roles = {r.id for r in member.roles}
         new_roles = list(member_roles.union(roles))
         await self.replace_role(member.id, new_roles, server_id)
 
-    async def add_role(self, member:discord.Member, role_id:str, server_id:str=None):
+    async def add_role(self, member:discord.Member, role_id:int, server_id:int=None):
         member_roles = {r.id for r in member.roles}
         member_roles.add(role_id)
-        new_roles = list(member_roles)
-        await self.replace_role(member.id, new_roles, server_id)
+        await self.replace_role(member.id, member_roles, server_id)
     
-    async def remove_role(self, member:discord.Member, role_id:str, server_id:str=None):
+    async def remove_role(self, member:discord.Member, role_id:int, server_id:int=None):
         member_roles = {r.id for r in member.roles}
         member_roles.discard(role_id)
-        new_roles = list(member_roles)
-        await self.replace_role(member.id, new_roles, server_id)
+        await self.replace_role(member.id, member_roles, server_id)
 
     async def role_control(self, msg:discord.Message, *, op:str="op1"):
         if msg.content.startswith("+color"):
@@ -1876,14 +1914,14 @@ class Bot(Translation):
             try:
                 target = self.color_role[name]
             except:
-                await self.client.send_message(msg.channel, log_format.role_not_found)
+                await msg.channel.send(log_format.role_not_found)
                 return None
             member_roles = {r.id for r in msg.author.roles}
             new_roles = self.exclusion_role(member_roles, self.color_role_set)
             new_roles.add(target)
             await self.replace_role(msg.author.id, list(new_roles))
             result = log_format.role_color_changed.format(msg.author.id, name)
-            await self.client.send_message(msg.channel, result)
+            await msg.channel.send(result)
         elif msg.content.startswith("+"):
             targets = msg.content.lstrip("+").strip().split()
             add_roles = set()
@@ -1896,13 +1934,13 @@ class Bot(Translation):
             await self.replace_role(msg.author.id, list(new_roles))
             result = log_format.role_changed.format(msg.author.id)
             embed = self.report_user_role_embed(msg.author)
-            await self.client.send_message(msg.channel, result, embed=embed)
+            await msg.channel.send(result, embed=embed)
         elif msg.content.startswith("-color"):
             member_roles = {r.id for r in msg.author.roles}
             new_roles = member_roles - self.color_role_set
             await self.replace_role(msg.author.id, list(new_roles))
             result = log_format.role_color_reset.format(msg.author.id)
-            await self.client.send_message(msg.channel, result)
+            await msg.channel.send(result)
         elif msg.content.startswith("-"):
             targets = msg.content.lstrip("-").strip().split()
             remove_roles = set()
@@ -1915,7 +1953,7 @@ class Bot(Translation):
             await self.replace_role(msg.author.id, list(new_roles))
             result = log_format.role_changed.format(msg.author.id)
             embed = self.report_user_role_embed(msg.author)
-            await self.client.send_message(msg.channel, result, embed=embed)
+            await msg.channel.send(result, embed=embed)
         else:
             return None
 
@@ -1938,20 +1976,20 @@ class Bot(Translation):
         cmder = msg.author
         cmd_role = self.config["op"]["op1"] if kwargs.get("role") is None else kwargs["roke"]
         if kwargs.get("content") is not None:
-            msg = await self.client.send_message(msg.channel, kwargs["content"])
-        await self.client.add_reaction(msg, "⭕")
-        await self.client.add_reaction(msg, "❌")
+            msg = await msg.channel.send(kwargs["content"])
+        await msg.add_reaction("⭕")
+        await msg.add_reaction("❌")
 
         def check(reaction:discord.Reaction, user:discord.User):
             if user == self.client.user:
                 return False
-            member = reaction.message.server.get_member(user.id)
+            member = reaction.message.guild.get_member(user.id)
             return cmd_role in {r.name for r in member.roles}
         
         emoji_count = {"done" : 0, "cancel" : 0}
         loop = True
         while loop:
-            rec, user = await self.client.wait_for_reaction(message=msg, check=check)
+            rec, user = await self.client.wait_for('reaction_add', timeout=timeout, check=check)
             if str(rec.emoji) == "⭕":
                 emoji_count["done"] += 1
                 if emoji_count["done"] >= done_count:
@@ -1976,7 +2014,7 @@ class Bot(Translation):
         content = " ".join(content_list) #join content list
         results = self.translate(content, target)
         embed = self.translate_embed(results, content, msg)
-        await self.client.send_message(msg.channel, results[0], embed=embed)
+        await msg.channel.send(results[0], embed=embed)
     
     def translate_embed(self, results:tuple, content:str, msg:discord.Message) -> discord.Embed:
         """
@@ -1985,7 +2023,7 @@ class Bot(Translation):
         color = msg.author.color if msg.author.color != discord.Colour.default() else discord.Colour(self.bot_color)
         embed = discord.Embed(
             type = "rich",
-            timestamp = msg.timestamp,
+            timestamp = msg.created_at,
             description = content[0:30] + ("..." if len(content) >= 30 else ""),
             color = color
         )
@@ -1993,6 +2031,18 @@ class Bot(Translation):
         # embed.set_author(name = self.user_name(msg.author))
         embed.set_footer(text = "translation: {0} → {1}. language detection confidence: {2}%".format(results[2], results[1], results[3]))
         return embed
+
+    async def auto_translation(self, msg:discord.Message):
+        detect_sample = msg.content.split("\n")[0]
+        source, confidence = self.detect(detect_sample)
+        if source == self.config["auto_translation_mainlang"]:
+            target = self.config["auto_translation_targetlang"]
+        else:
+            target = self.config["auto_translation_mainlang"]
+        result = self.translation(msg.content, target, source)
+        results = result, target, source, confidence
+        embed = self.translate_embed(results, msg.content, msg)
+        await msg.channel.send(results[0], embed=embed)
 
     #Basic function
     def user_name(self, author):
@@ -2089,7 +2139,7 @@ class Bot(Translation):
             time = msg.timestamp.strftime("%Y/%m/%d %H:%M:%S"),
             edit_time = msg.edited_timestamp.strftime("%Y/%m/%d %H:%M:%S") if isinstance(msg.edited_timestamp, datetime,datetime) else "not editd",
             type = str(msg.type),
-            server = "{0} (ID: {1})".format(msg.server.name, msg.server.id),
+            server = "{0} (ID: {1})".format(msg.guild.name, msg.guild.id),
             channel = "{0} (ID: {1})".format(msg.channel.name, msg.channel.id),
             author = self.save_author_mention(msg.author),
             embeds = "",
@@ -2117,4 +2167,6 @@ if __name__ == "__main__":
         target = input("target: ")
         source = input("source: ")
         content = input("content: ")
+        #with open("send_msg.txt", "r", encoding="utf-8") as f:
+            #content = f.read()
         trans.test_translation(content, target, source)
